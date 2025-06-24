@@ -11,6 +11,7 @@ import argparse
 from pathlib import Path
 import glob
 from loguru import logger
+from multiprocessing.pool import ThreadPool
 
 # Register models
 from mineru.model import vlm_hf_model as _
@@ -166,8 +167,12 @@ def main():
         default='vlm-sglang-engine', help='VLM backend to use'
     )
     parser.add_argument(
-        '-u', '--server-url', default=None,
+        '-u', '--server-url', default="http://127.0.0.1:30000",
         help='Server URL for client backend (e.g., http://127.0.0.1:30000)'
+    )
+    parser.add_argument(
+        '-n', '--num-workers', type=int, default=1,
+        help='Number of worker threads for sglang-client backend'
     )
     parser.add_argument(
         '--no-layout-box', dest='f_draw_layout_bbox', action='store_false',
@@ -219,19 +224,36 @@ def main():
         logger.error(f"Cannot create output directory {args.output}: {e}")
         return
 
-    do_parse(
-        output_dir=args.output,
-        pdf_paths=pdf_paths,
-        backend=args.backend,
-        server_url=args.server_url,
-        f_draw_layout_bbox=args.f_draw_layout_bbox,
-        f_draw_span_bbox=args.f_draw_span_bbox,
-        f_dump_md=args.f_dump_md,
-        f_dump_middle_json=args.f_dump_middle_json,
-        f_dump_model_output=args.f_dump_model_output,
-        f_dump_orig_pdf=args.f_dump_orig_pdf,
-        f_dump_content_list=args.f_dump_content_list,
-    )
+    # Parallel processing for sglang-client
+    if args.backend == 'sglang-client' and args.num_workers > 1:
+        logger.info(f"Running with {args.num_workers} worker threads")
+        pool = ThreadPool(args.num_workers)
+        tasks = [
+            (args.output, [path], args.backend, args.server_url,
+             args.f_draw_layout_bbox, args.f_draw_span_bbox,
+             args.f_dump_md, args.f_dump_middle_json,
+             args.f_dump_model_output, args.f_dump_orig_pdf,
+             args.f_dump_content_list)
+            for path in pdf_paths
+        ]
+        # Map tasks to pool
+        pool.starmap(do_parse, tasks)
+        pool.close()
+        pool.join()
+    else:
+        do_parse(
+            output_dir=args.output,
+            pdf_paths=pdf_paths,
+            backend=args.backend,
+            server_url=args.server_url,
+            f_draw_layout_bbox=args.f_draw_layout_bbox,
+            f_draw_span_bbox=args.f_draw_span_bbox,
+            f_dump_md=args.f_dump_md,
+            f_dump_middle_json=args.f_dump_middle_json,
+            f_dump_model_output=args.f_dump_model_output,
+            f_dump_orig_pdf=args.f_dump_orig_pdf,
+            f_dump_content_list=args.f_dump_content_list,
+        )
 
 if __name__ == '__main__':
     main()
