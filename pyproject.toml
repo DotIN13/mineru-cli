@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mineru-cli"
+version = "0.1.0"
+description = "Command-line utility to parse documents using VLM backends (vlm-sglang-engine or vlm-sglang-client)"
+readme = "README.md"
+authors = [ { name = "DotIN13", email = "tzhang3@uchicago.edu" } ]
+license = { file = "LICENSE" }
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent"
+]
+dependencies = [
+  "mineru[all]>=2.0.6",
+  "loguru",
+  "pyyaml",
+  "numpy",
+  "pymupdf"
+]
+
+[project.scripts]
+mineru-cli = "mineru_cli.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*"]
