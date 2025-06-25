@@ -68,7 +68,7 @@ Users can choose between two processing modes:
    * First, start the server:
 
      ```bash
-     export MINERU_MODEL_SOURCE=modelscope # Set model source to either modelscope, huggingface or local
+     export MINERU_MODEL_SOURCE=modelscope # modelscope, huggingface or local
      mineru-sglang-server
      ```
 
