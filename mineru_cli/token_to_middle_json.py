@@ -5,13 +5,14 @@ from loguru import logger
 
 from mineru.backend.pipeline.model_init import AtomModelSingleton
 from mineru.utils.config_reader import get_llm_aided_config
-from mineru.utils.cut_image import cut_image_and_table
 from mineru.utils.enum_class import ContentType
 from mineru.utils.hash_utils import str_md5
 from mineru.backend.vlm.vlm_magic_model import MagicModel
 from mineru.utils.llm_aided import llm_aided_title
 from mineru.utils.pdf_image_tools import get_crop_img
 from mineru.version import __version__
+
+from mineru_cli.image_utils import cut_image_and_table
 
 
 def token_to_page_info(
