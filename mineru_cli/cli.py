@@ -4,7 +4,11 @@ Command-line utility to parse documents using VLM backends (vlm-sglang-engine or
 Supports individual files, directories, and glob patterns, with proper error handling.
 """
 import os
-os.environ['MINERU_MODEL_SOURCE'] = "modelscope"
+
+# Set environment variable for MinerU model source if not already set
+if "MINERU_MODEL_SOURCE" not in os.environ:
+    # Default to modelscope if not specified
+    os.environ["MINERU_MODEL_SOURCE"] = "modelscope"
 
 import json
 import argparse
@@ -21,11 +25,12 @@ from mineru.model import vlm_sglang_model as _
 from mineru.cli.common import prepare_env, read_fn
 from mineru.data.data_reader_writer import FileBasedDataWriter
 from mineru.utils.enum_class import MakeMode
-from mineru.backend.vlm.vlm_analyze import doc_analyze as vlm_doc_analyze
 from mineru.backend.vlm.vlm_middle_json_mkcontent import union_make as vlm_union_make
 
 from mineru_cli.draw_bbox import draw_layout_bbox, draw_span_bbox
 from mineru_cli.pdf_utils import extract_pdf_bytes_by_pymupdf
+from mineru_cli.reorder_images import reorder_images
+from mineru_cli.vlm_doc_analyze import vlm_doc_analyze
 
 
 def do_parse(
@@ -40,7 +45,9 @@ def do_parse(
     f_dump_model_output: bool = True,
     f_dump_orig_pdf: bool = True,
     f_dump_content_list: bool = True,
-    f_make_md_mode: MakeMode = MakeMode.MM_MD
+    f_dump_table_images: bool = True,
+    f_dump_interline_equation_images: bool = True,
+    f_make_md_mode: MakeMode = MakeMode.MM_MD,
 ) -> None:
     """
     Parse documents using VLM backends. Processes each file with isolation and logging.
@@ -53,38 +60,45 @@ def do_parse(
         try:
             # Read and preprocess
             pdf_bytes = read_fn(pdf_path)
-            processed_bytes = extract_pdf_bytes_by_pymupdf(pdf_bytes, 0, None)
+            pdf_bytes = extract_pdf_bytes_by_pymupdf(pdf_bytes, 0, None)
 
             # Prepare output dirs
-            image_dir, md_dir = prepare_env(output_dir, pdf_name, 'vlm')
+            image_dir, md_dir = prepare_env(output_dir, pdf_name, "vlm")
             image_writer = FileBasedDataWriter(image_dir)
             md_writer = FileBasedDataWriter(md_dir)
 
             # Analyze via VLM
             middle_json, infer_output = vlm_doc_analyze(
-                processed_bytes,
+                pdf_bytes,
                 image_writer=image_writer,
                 backend=backend,
-                server_url=server_url
+                server_url=server_url,
+                f_dump_table_images=f_dump_table_images,
+                f_dump_interline_equation_images=f_dump_interline_equation_images,
             )
-            pdf_info = middle_json.get('pdf_info', {})
+            middle_json = reorder_images(
+                middle_json
+            )  # Reorder images in the middle JSON
+            pdf_info = middle_json.get("pdf_info", {})
 
             # Draw bounding boxes
             if f_draw_layout_bbox:
                 try:
-                    draw_layout_bbox(pdf_info, processed_bytes, md_dir, f"{pdf_name}_layout.pdf")
+                    draw_layout_bbox(
+                        pdf_info, pdf_bytes, md_dir, f"{pdf_name}_layout.pdf"
+                    )
                 except Exception as e:
                     logger.error(f"Layout bbox failed for {pdf_name}: {e}")
             if f_draw_span_bbox:
                 try:
-                    draw_span_bbox(pdf_info, processed_bytes, md_dir, f"{pdf_name}_span.pdf")
+                    draw_span_bbox(pdf_info, pdf_bytes, md_dir, f"{pdf_name}_span.pdf")
                 except Exception as e:
                     logger.error(f"Span bbox failed for {pdf_name}: {e}")
 
             # Write outputs with individual error handling
             if f_dump_orig_pdf:
                 try:
-                    md_writer.write(f"{pdf_name}_origin.pdf", processed_bytes)
+                    md_writer.write(f"{pdf_name}_origin.pdf", pdf_bytes)
                 except Exception as e:
                     logger.error(f"Failed writing original PDF for {pdf_name}: {e}")
             if f_dump_md:
@@ -97,10 +111,12 @@ def do_parse(
             if f_dump_content_list:
                 try:
                     img_folder = os.path.basename(image_dir)
-                    content_list = vlm_union_make(pdf_info, MakeMode.CONTENT_LIST, img_folder)
+                    content_list = vlm_union_make(
+                        pdf_info, MakeMode.CONTENT_LIST, img_folder
+                    )
                     md_writer.write_string(
                         f"{pdf_name}_content_list.json",
-                        json.dumps(content_list, ensure_ascii=False, indent=4)
+                        json.dumps(content_list, ensure_ascii=False, indent=4),
                     )
                 except Exception as e:
                     logger.error(f"Content list dump failed for {pdf_name}: {e}")
@@ -108,7 +124,7 @@ def do_parse(
                 try:
                     md_writer.write_string(
                         f"{pdf_name}_middle.json",
-                        json.dumps(middle_json, ensure_ascii=False, indent=4)
+                        json.dumps(middle_json, ensure_ascii=False, indent=4),
                     )
                 except Exception as e:
                     logger.error(f"Middle JSON dump failed for {pdf_name}: {e}")
@@ -137,7 +153,7 @@ def expand_inputs(inputs: list[str]) -> list[Path]:
             for child in children:
                 if child.is_file():
                     paths.append(child)
-        elif any(ch in spec for ch in ['*', '?', '[']):
+        elif any(ch in spec for ch in ["*", "?", "["]):
             matches = sorted(glob.glob(spec))
             for match in matches:
                 mp = Path(match)
@@ -155,52 +171,94 @@ def main():
         description="Parse documents using VLM backends (vlm-sglang-engine or vlm-sglang-client)."
     )
     parser.add_argument(
-        '-i', '--input', '-p', '--path', nargs='+', required=True,
-        help='Files, directories, or glob patterns to parse'
+        "-i",
+        "--input",
+        "-p",
+        "--path",
+        nargs="+",
+        required=True,
+        help="Files, directories, or glob patterns to parse",
     )
     parser.add_argument(
-        '-o', '--output', type=Path, required=True,
-        help='Directory to write output files'
+        "-o",
+        "--output",
+        type=Path,
+        required=True,
+        help="Directory to write output files",
     )
     parser.add_argument(
-        '-b', '--backend', choices=['vlm-sglang-engine', 'vlm-sglang-client'],
-        default='vlm-sglang-engine', help='VLM backend to use'
+        "-b",
+        "--backend",
+        choices=["vlm-sglang-engine", "vlm-sglang-client"],
+        default="vlm-sglang-engine",
+        help="VLM backend to use",
     )
     parser.add_argument(
-        '-u', '--server-url', default="http://127.0.0.1:30000",
-        help='Server URL for client backend (e.g., http://127.0.0.1:30000)'
+        "-u",
+        "--server-url",
+        default="http://127.0.0.1:30000",
+        help="Server URL for client backend (e.g., http://127.0.0.1:30000)",
     )
     parser.add_argument(
-        '-n', '--num-workers', type=int, default=1,
-        help='Number of worker processes for sglang-client backend'
+        "-n",
+        "--num-workers",
+        type=int,
+        default=1,
+        help="Number of worker processes for sglang-client backend",
     )
     parser.add_argument(
-        '--no-layout-box', dest='f_draw_layout_bbox', action='store_false',
-        help='Disable drawing of layout bounding boxes'
+        "--no-layout-box",
+        dest="f_draw_layout_bbox",
+        action="store_false",
+        help="Disable drawing of layout bounding boxes",
     )
     parser.add_argument(
-        '--span-box', dest='f_draw_span_bbox', action='store_true',
-        help='Enable drawing of span bounding boxes'
+        "--span-box",
+        dest="f_draw_span_bbox",
+        action="store_true",
+        help="Enable drawing of span bounding boxes",
     )
     parser.add_argument(
-        '--no-md', dest='f_dump_md', action='store_false',
-        help='Disable dumping of Markdown output'
+        "--no-md",
+        dest="f_dump_md",
+        action="store_false",
+        help="Disable dumping of Markdown output",
     )
     parser.add_argument(
-        '--no-middle-json', dest='f_dump_middle_json', action='store_false',
-        help='Disable dumping of middle JSON output'
+        "--no-middle-json",
+        dest="f_dump_middle_json",
+        action="store_false",
+        help="Disable dumping of middle JSON output",
     )
     parser.add_argument(
-        '--no-model-output', dest='f_dump_model_output', action='store_false',
-        help='Disable dumping of model inference output'
+        "--no-model-output",
+        dest="f_dump_model_output",
+        action="store_false",
+        help="Disable dumping of model inference output",
     )
     parser.add_argument(
-        '--no-orig-pdf', dest='f_dump_orig_pdf', action='store_false',
-        help='Disable copying of original PDF to output'
+        "--no-orig-pdf",
+        dest="f_dump_orig_pdf",
+        action="store_false",
+        help="Disable copying of original PDF to output",
     )
     parser.add_argument(
-        '--no-content-list', dest='f_dump_content_list', action='store_false',
-        help='Disable dumping of content list JSON'
+        "--no-content-list",
+        dest="f_dump_content_list",
+        action="store_false",
+        help="Disable dumping of content list JSON",
+    )
+    parser.add_argument(
+        "--no-table-images",
+        dest="f_dump_table_images",
+        action="store_false",
+        help="Disable dumping of table images",
+    )
+    parser.add_argument(
+        "--no-interline-equation-images",
+        dest="f_dump_interline_equation_images",
+        action="store_false",
+        help="Disable dumping of interline equation images",
     )
     args = parser.parse_args()
 
@@ -225,7 +283,7 @@ def main():
         return
 
     # Parallel processing for sglang-client using processes
-    if args.backend == 'sglang-client' and args.num_workers > 1:
+    if args.backend == "sglang-client" and args.num_workers > 1:
         logger.info(f"Running with {args.num_workers} worker processes")
         tasks = [
             (
@@ -239,7 +297,9 @@ def main():
                 args.f_dump_middle_json,
                 args.f_dump_model_output,
                 args.f_dump_orig_pdf,
-                args.f_dump_content_list
+                args.f_dump_content_list,
+                args.f_dump_table_images,
+                args.f_dump_interline_equation_images,
             )
             for path in pdf_paths
         ]
@@ -258,8 +318,10 @@ def main():
             f_dump_model_output=args.f_dump_model_output,
             f_dump_orig_pdf=args.f_dump_orig_pdf,
             f_dump_content_list=args.f_dump_content_list,
+            f_dump_table_images=args.f_dump_table_images,
+            f_dump_interline_equation_images=args.f_dump_interline_equation_images,
         )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
