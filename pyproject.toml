@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mineru-cli"
-version = "0.1.1"
+version = "0.1.2"
 description = "Command-line utility to parse documents using VLM backends (vlm-sglang-engine or vlm-sglang-client)"
 readme = "README.md"
 authors = [ { name = "DotIN13", email = "tzhang3@uchicago.edu" } ]
